@@ -606,6 +606,9 @@ class TrashBackend implements ITrashBackend {
 	}
 
 	public function cleanTrashFolder(FolderDefinitionWithPermissions $folder): void {
+		if (!\OCA\Files_Trashbin\Service\ConfigService::getDeleteFromTrashEnabled()) {
+			throw new NotPermittedException('Manual trash cleanup is disabled by retention policy');
+		}
 		$trashFolder = $this->setupTrashFolder($folder);
 
 		foreach ($trashFolder->getDirectoryListing() as $node) {
@@ -619,65 +622,67 @@ class TrashBackend implements ITrashBackend {
 	 * @return array{int, int|float}
 	 */
 	public function expire(Expiration $expiration): array {
-		$size = 0;
-		$count = 0;
+		return \OCP\Server::get(\OCA\Files_Trashbin\Trash\ITrashManager::class)->withMutationLock(function () use ($expiration): array {
+			$size = 0;
+			$count = 0;
 
-		$folders = $this->folderManager->getAllFoldersWithSize();
-		$folders = array_map(fn (FolderWithMappingsAndCache $folder): FolderDefinitionWithPermissions => FolderDefinitionWithPermissions::fromFolder($folder, $folder->rootCacheEntry, Constants::PERMISSION_ALL), $folders);
-		foreach ($folders as $folder) {
-			$folderId = $folder->id;
-			$trashItems = $this->trashManager->listTrashForFolders([$folderId]);
+			$folders = $this->folderManager->getAllFoldersWithSize();
+			$folders = array_map(fn (FolderWithMappingsAndCache $folder): FolderDefinitionWithPermissions => FolderDefinitionWithPermissions::fromFolder($folder, $folder->rootCacheEntry, Constants::PERMISSION_ALL), $folders);
+			foreach ($folders as $folder) {
+				$folderId = $folder->id;
+				$trashItems = $this->trashManager->listTrashForFolders([$folderId]);
 
-			// calculate size of trash items
-			$sizeInTrash = 0;
-			$trashFolder = $this->setupTrashFolder($folder);
-			$nodes = []; // cache
-			foreach ($trashItems as $groupTrashItem) {
-				$nodeName = $groupTrashItem['name'] . '.d' . $groupTrashItem['deleted_time'];
-				try {
-					$nodes[$nodeName] = $node = $trashFolder->get($nodeName);
-				} catch (NotFoundException) {
-					$this->trashManager->removeItem($folderId, $groupTrashItem['name'], $groupTrashItem['deleted_time']);
-					continue;
-				}
-
-				$sizeInTrash += $node->getSize();
-			}
-
-			$size = $folder->rootCacheEntry->getSize();
-
-			foreach ($trashItems as $groupTrashItem) {
-				$nodeName = $groupTrashItem['name'] . '.d' . $groupTrashItem['deleted_time'];
-				if (!isset($nodes[$nodeName])) {
-					continue;
-				}
-
-				$node = $nodes[$nodeName];
-
-				if ($expiration->isExpired($groupTrashItem['deleted_time'], $folder->quota > 0 && $folder->quota < ($size + $sizeInTrash))) {
-					$this->logger->debug('expiring ' . $node->getPath());
-					if ($node->getStorage()->unlink($node->getInternalPath()) === false) {
-						$this->logger->error('Failed to remove item from trashbin: ' . $node->getPath());
+				// calculate size of trash items
+				$sizeInTrash = 0;
+				$trashFolder = $this->setupTrashFolder($folder);
+				$nodes = []; // cache
+				foreach ($trashItems as $groupTrashItem) {
+					$nodeName = $groupTrashItem['name'] . '.d' . $groupTrashItem['deleted_time'];
+					try {
+						$nodes[$nodeName] = $node = $trashFolder->get($nodeName);
+					} catch (NotFoundException) {
+						$this->trashManager->removeItem($folderId, $groupTrashItem['name'], $groupTrashItem['deleted_time']);
 						continue;
 					}
 
-					// only count up after checking if removal is possible
-					$count += 1;
-					$size += $node->getSize();
-					$size -= $node->getSize();
-					$node->getStorage()->getCache()->remove($node->getInternalPath());
-					$this->trashManager->removeItem($folderId, $groupTrashItem['name'], $groupTrashItem['deleted_time']);
-					if (!is_null($groupTrashItem['file_id']) && !is_null($this->versionsBackend)) {
-						$this->versionsBackend->deleteAllVersionsForFile($folder, $groupTrashItem['file_id']);
+					$sizeInTrash += $node->getSize();
+				}
+
+				$size = $folder->rootCacheEntry->getSize();
+
+				foreach ($trashItems as $groupTrashItem) {
+					$nodeName = $groupTrashItem['name'] . '.d' . $groupTrashItem['deleted_time'];
+					if (!isset($nodes[$nodeName])) {
+						continue;
 					}
-				} else {
-					$this->logger->debug($node->getPath() . " isn't set to be expired yet, stopping expiry");
-					break;
+
+					$node = $nodes[$nodeName];
+
+					if ($expiration->isExpired($groupTrashItem['deleted_time'], $folder->quota > 0 && $folder->quota < ($size + $sizeInTrash))) {
+						$this->logger->debug('expiring ' . $node->getPath());
+						if ($node->getStorage()->unlink($node->getInternalPath()) === false) {
+							$this->logger->error('Failed to remove item from trashbin: ' . $node->getPath());
+							continue;
+						}
+
+						// only count up after checking if removal is possible
+						$count += 1;
+						$size += $node->getSize();
+						$size -= $node->getSize();
+						$node->getStorage()->getCache()->remove($node->getInternalPath());
+						$this->trashManager->removeItem($folderId, $groupTrashItem['name'], $groupTrashItem['deleted_time']);
+						if (!is_null($groupTrashItem['file_id']) && !is_null($this->versionsBackend)) {
+							$this->versionsBackend->deleteAllVersionsForFile($folder, $groupTrashItem['file_id']);
+						}
+					} else {
+						$this->logger->debug($node->getPath() . " isn't set to be expired yet, stopping expiry");
+						break;
+					}
 				}
 			}
-		}
 
-		return [$count, $size];
+			return [$count, $size];
+		});
 	}
 
 	public function updateTrashedChildren(IStorage $fromFolder, IStorage $toFolder, string $fromLocation, string $toLocation): void {

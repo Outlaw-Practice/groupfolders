@@ -69,7 +69,12 @@ class Cleanup extends Base {
 						return -1;
 					}
 
-					$this->trashBackend->cleanTrashFolder($folder);
+					try {
+						$this->trashBackend->cleanTrashFolder($folder);
+					} catch (\OCP\Files\NotPermittedException $error) {
+						$output->writeln('<error>Trash cleanup refused by retention policy.</error>');
+						return 1;
+					}
 
 					return 0;
 				}
@@ -85,7 +90,12 @@ class Cleanup extends Base {
 			}
 
 			foreach ($folders as $folder) {
-				$this->trashBackend->cleanTrashFolder($folder);
+				try {
+					$this->trashBackend->cleanTrashFolder($folder);
+				} catch (\OCP\Files\NotPermittedException $error) {
+					$output->writeln('<error>Trash cleanup refused by retention policy.</error>');
+					return 1;
+				}
 			}
 		}
 

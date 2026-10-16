@@ -270,6 +270,9 @@ class FolderStorageManager {
 	}
 
 	public function deleteStoragesForFolder(FolderDefinition $folder): void {
+		if (!\OCA\Files_Trashbin\Service\ConfigService::getDeleteFromTrashEnabled()) {
+			throw new \OCP\Files\NotPermittedException('Folder removal is disabled by retention policy');
+		}
 		foreach (['files', 'trash', 'versions', ''] as $type) {
 			$storage = $this->getBaseStorageForFolder($folder->id, $folder->useSeparateStorage(), $folder, null, false, $type);
 			/** @var Cache $cache */
