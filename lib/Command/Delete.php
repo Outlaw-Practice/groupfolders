@@ -40,7 +40,12 @@ class Delete extends FolderCommand {
 		$helper = $this->getHelper('question');
 		$question = new ConfirmationQuestion('Are you sure you want to delete the Team folder ' . $folder->mountPoint . ' and all files within, this cannot be undone (y/N).', false);
 		if ($input->getOption('force') || $helper->ask($input, $output, $question)) {
-			$this->folderStorageManager->deleteStoragesForFolder($folder);
+			try {
+				$this->folderStorageManager->deleteStoragesForFolder($folder);
+			} catch (\OCP\Files\NotPermittedException $error) {
+				$output->writeln('<error>Folder removal is disabled by retention policy.</error>');
+				return 1;
+			}
 			$this->folderManager->removeFolder($folder->id);
 		}
 

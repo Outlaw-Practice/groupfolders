@@ -301,7 +301,11 @@ class FolderController extends OCSController {
 			throw new OCSForbiddenException('This folder belongs to a team and cannot be deleted directly; unlink it from its team first');
 		}
 
-		$this->folderStorageManager->deleteStoragesForFolder($folder);
+		try {
+			$this->folderStorageManager->deleteStoragesForFolder($folder);
+		} catch (\OCP\Files\NotPermittedException $error) {
+			throw new OCSForbiddenException('Folder removal is disabled by retention policy');
+		}
 		$this->manager->removeFolder($id);
 
 		return new DataResponse(['success' => true]);
