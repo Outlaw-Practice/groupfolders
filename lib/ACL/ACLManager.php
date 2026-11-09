@@ -244,10 +244,12 @@ class ACLManager {
 	public function getPermissionsForTree(int $folderId, int $storageId, string $path): int {
 		$path = ltrim($path, '/');
 		$rules = $this->ruleManager->getRulesForPrefix($this->user, $storageId, $path);
+		// Include inherited allows and denies at the tree root before checking
+		// descendants. The folder default alone omits those ancestor rules.
+		$permissions = $this->getACLPermissionsForPath($folderId, $storageId, $path);
 
 		if ($this->inheritMergePerUser) {
 			$pathsWithRules = array_keys($rules);
-			$permissions = $this->getBasePermission($folderId);
 			foreach ($pathsWithRules as $path) {
 				$permissions &= $this->getACLPermissionsForPath($folderId, $storageId, $path);
 			}
@@ -256,7 +258,7 @@ class ACLManager {
 			return array_reduce($rules, function (int $permissions, array $rules): int {
 				$mergedRule = Rule::mergeRules($rules);
 				return $mergedRule->applyDenyPermissions($permissions);
-			}, $this->getBasePermission($folderId));
+			}, $permissions);
 		}
 	}
 

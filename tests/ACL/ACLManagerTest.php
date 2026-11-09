@@ -336,4 +336,81 @@ class ACLManagerTest extends TestCase {
 		$this->assertEquals(Constants::PERMISSION_ALL - Constants::PERMISSION_DELETE, $perUserAclManager->getPermissionsForTree(0, 0, 'foo3'));
 		$this->assertEquals(Constants::PERMISSION_ALL - Constants::PERMISSION_DELETE, $perUserAclManager->getPermissionsForTree(0, 0, 'foo3/bar'));
 	}
+
+	private function getAclManagerWithBasePermission(bool $perUserMerge, int $permission): ACLManager {
+		$manager = $this->getMockBuilder(ACLManager::class)
+			->setConstructorArgs([$this->ruleManager, $this->userMappingManager, $this->user, $perUserMerge])
+			->onlyMethods(['getBasePermission'])
+			->getMock();
+		$manager->method('getBasePermission')->willReturn($permission);
+
+		return $manager;
+	}
+
+	public function testDefaultDenyTreeUsesInheritedPrivateAllow(): void {
+		$this->rules = [
+			'files' => [new Rule($this->dummyMapping, 1, Constants::PERMISSION_ALL, Constants::PERMISSION_ALL - Constants::PERMISSION_SHARE)],
+		];
+		foreach ([false, true] as $perUserMerge) {
+			$manager = $this->getAclManagerWithBasePermission($perUserMerge, 0);
+			$this->assertSame(15, $manager->getPermissionsForTree(13, 26, 'files/team'));
+		}
+	}
+
+	public function testDefaultDenyTreeWithoutApplicableRules(): void {
+		$this->rules = [];
+		foreach ([false, true] as $perUserMerge) {
+			$manager = $this->getAclManagerWithBasePermission($perUserMerge, 0);
+			$this->assertSame(0, $manager->getPermissionsForTree(13, 26, 'files/team'));
+		}
+	}
+
+	public function testTreeDescendantDenyRestrictsInheritedPrivateAllow(): void {
+		$this->rules = [
+			'files' => [new Rule($this->dummyMapping, 1, Constants::PERMISSION_ALL, Constants::PERMISSION_ALL - Constants::PERMISSION_SHARE)],
+			'files/team/child' => [new Rule($this->dummyMapping, 2, Constants::PERMISSION_DELETE, 0)],
+		];
+		foreach ([false, true] as $perUserMerge) {
+			$manager = $this->getAclManagerWithBasePermission($perUserMerge, 0);
+			$this->assertSame(7, $manager->getPermissionsForTree(13, 26, 'files/team'));
+		}
+	}
+
+	public function testDefaultAllTreeIncludesAncestorDeny(): void {
+		$this->rules = [
+			'files' => [new Rule($this->dummyMapping, 1, Constants::PERMISSION_DELETE, 0)],
+		];
+		foreach ([false, true] as $perUserMerge) {
+			$manager = $this->getAclManagerWithBasePermission($perUserMerge, Constants::PERMISSION_ALL);
+			$this->assertSame(23, $manager->getPermissionsForTree(13, 26, 'files/team'));
+		}
+	}
+
+	public function testManagerReadBaseUsesInheritedPrivateAllow(): void {
+		$this->rules = [
+			'files' => [new Rule($this->dummyMapping, 1, Constants::PERMISSION_ALL, Constants::PERMISSION_ALL - Constants::PERMISSION_SHARE)],
+		];
+		foreach ([false, true] as $perUserMerge) {
+			$manager = $this->getAclManagerWithBasePermission($perUserMerge, Constants::PERMISSION_READ);
+			$this->assertSame(15, $manager->getPermissionsForTree(13, 26, 'files/team'));
+		}
+	}
+
+	public function testManagerReadBaseDoesNotGrantOtherPermissions(): void {
+		$this->rules = [];
+		foreach ([false, true] as $perUserMerge) {
+			$manager = $this->getAclManagerWithBasePermission($perUserMerge, Constants::PERMISSION_READ);
+			$this->assertSame(1, $manager->getPermissionsForTree(13, 26, 'files/team'));
+		}
+	}
+
+	public function testChildAllowDoesNotGrantDefaultDenyParent(): void {
+		$this->rules = [
+			'files/team/child' => [new Rule($this->dummyMapping, 1, Constants::PERMISSION_ALL, Constants::PERMISSION_ALL - Constants::PERMISSION_SHARE)],
+		];
+		foreach ([false, true] as $perUserMerge) {
+			$manager = $this->getAclManagerWithBasePermission($perUserMerge, 0);
+			$this->assertSame(0, $manager->getPermissionsForTree(13, 26, 'files/team'));
+		}
+	}
 }
